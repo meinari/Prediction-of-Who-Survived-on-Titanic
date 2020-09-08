@@ -1,0 +1,326 @@
+---
+title: "Titanic Analysis"
+author: "Meinari"
+date: "February 23, 2020"
+output: 
+  html_document:
+    toc: true
+    toc_depth: 3
+    toc_float: 
+        collapsed: false
+    number_sections: true
+    fig_caption: yes
+    df_print : paged 
+---
+
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
+options(scipen = 9999)
+rm(list=ls())
+```
+
+# Introduction
+
+The data is about biography of passengers of Titanic. It contains information about gender, who survived or not, ticket class, age, total sibling that aboard the titanic, number of parents aboard, passenger fare, and port of embarkation. This research is to predict the rate survival of Titanic's passenger based on those thing. This research will use two models, *logistic regression* and *KNN analysis*. At the end of this analysis, this will compare performance between logistic and KNN model.
+
+The steps of the analysis are as followed :
+
+
+## 1. Read Data
+
+```{r}
+titanic <- read.csv("train_and_test3.csv")
+```
+
+The data consist of 9 variable as followed :
+
+1. *PassengerID* : ID of passenger (integer)
+2. *Age* : Passenger Age (numeric)
+3. *Fare* : Passenger fare (numeric)
+4. *Sex* : Passenger gender (integer); `0` as *male* and `1` as *female*
+5. *sibsp* : Number of siblings / spouses aboard the Titanic (integer)
+6. *Parch* : Number of parents / children aboard the Titanic (integer)
+7. *Pclass* : Ticket class (integer); `1` as *first class*, `2` as *second class*, `3` as *third class*
+8. *Embarked* : Port of Embarkation (integer); `0` as *Cherbourg*, `1` as *Queenstown*, `2` as *Southampton*
+9. *Survived* : Survival (integer); `1` as *Survived* and `0` as *Died*
+
+## 2. Data Preprocessing
+
+```{r}
+# To see data structure
+str(titanic)
+
+```
+Class of the data mostly are integer and numeric.
+
+```{r}
+# Based on data structur and data variation, we would not use `PassengerID` and `Fare`
+library(dplyr)
+titanic1 <- titanic %>% 
+  select(Sex, sibsp, Parch, Pclass, Embarked, Survived, Age1)
+
+```
+
+
+### 2.1 Data cleaning
+
+```{r}
+# to see if there is missing value on data frame
+
+colSums(is.na(titanic1))
+```
+There are 2 missing value of 'Embarked' Variable. Therefore we need to remove `NA` observation.
+
+
+```{r}
+# Then we use `dplyr` to mutate variable from numeric to factor
+
+library(dplyr)
+library(tidyverse)
+
+titanic1 <- titanic1 %>% 
+  drop_na(Embarked) %>% 
+  mutate(Survived = case_when(Survived == 1 ~ "Yes",
+                              Survived == 0 ~ "No"),
+         Survived = as.factor(Survived),
+         Pclass = case_when(Pclass == 1 ~ "First Class",
+                            Pclass == 2 ~ "Second Class",
+                            Pclass == 3 ~ "Third Class"),
+         Sex = case_when(Sex == 1 ~ "Female",
+                         Sex == 0 ~ "Male"),
+         Embarked = case_when(Embarked == 0 ~ "Cherbourg",
+                              Embarked == 1 ~ "Queenstown",
+                              Embarked == 2 ~ "Southampton")
+         )
+```
+
+
+## 3. Exploratory Data Analysis
+
+```{r}
+
+library(ggplot2)
+
+titanic1 %>% 
+  ggplot(mapping = aes(x = Sex)) +
+  geom_density(aes(fill = Survived)) +
+  theme_minimal()
+
+```
+
+
+## 4. Cross Validation (Split Data)
+
+```{r}
+set.seed(100)
+idx_l <- sample(nrow(titanic1), size=nrow(titanic1)*0.8)
+train <- titanic1[idx_l,]
+test <- titanic1[-idx_l,]
+```
+
+
+```{r}
+# checking whether the data train has been distributed equally
+prop.table(table(train$Survived))
+```
+the data train has not been distributed eqaully. therefore, need to do upSample
+
+```{r}
+library(caret)
+
+train_up <- upSample(x = train %>% 
+                       select(-Survived),
+                           y = as.factor(train$Survived),
+                           yname = "Survived")
+
+prop.table(table(train_up$Survived))
+```
+The train data has been distributed equally for the number of Survival
+
+## 5. Modelling
+
+using stepwise backward
+
+```{r}
+model_backward_up <- step(glm(Survived~., data = train_up, family="binomial"), direction = "backward")
+summary(model_backward_up)$call
+```
+Variable 'embarked' is not significant for this model, therefore the logistic model to predict who survived on Titanic is:
+
+*glm(formula = Survived ~ Sex + sibsp + Parch + Pclass + Age1, 
+    family = "binomial", data = train_up)*
+
+we found that port embarked, parch (number of parent) do not include in this model.
+
+### 5.1 Interpretasi model
+
+```{r}
+library(gtools)
+data.frame("coef" = coef(model_backward_up),
+           "Odds_ratio" = exp(coef(model_backward_up)),
+           "prob" = inv.logit(coef(model_backward_up)))
+```
+
+
+Interpretation :
+- Class
+Based on regression we can conclude that probability of Titanic's Passenger second class and third class to survive are 38% and 23% respectively. or comparing to first class Titanic's passenger their probability to survive are smaller.
+
+- Sex
+Probability of male to survive is smaller than female, in which probability of Male passenger of Titanic to survive is 14%, 
+
+- sibSp (number of siblings passenger aboard the Titanic)
+So number of family aboard on Titanic also affect to probability someone to survive on Titanic. they who have more number of siblings were tend to have more probability to die. Probability of Titanic's Passenger to survive is 45%.
+
+- Age, probability of child (0-10) to survive is larger than adult. Moreover, probability of adult (21-40) to survive is higher than elder (61-80).
+
+To sum up, they who are first class, female, young and have less family aboard on Titanic has the more probability to survive.
+
+## 6. Predict
+
+
+```{r}
+# Predict the data using data test.
+test$probability_up <- predict(model_backward_up, newdata = test
+                                , type = "response")
+```
+
+```{r}
+test1 <- test 
+
+test <-  test %>% 
+  select(-probability_up)
+```
+
+
+```{r}
+# Comparing result prediction to data actual
+test1 %>% 
+  select(probability_up, Survived)
+```
+
+```{r}
+#convert to categorical
+
+test1$prediction_up <- ifelse(test1$probability_up > 0.5, "Yes", "No")
+test1 %>% 
+  select(prediction_up, Survived)
+
+```
+
+
+## 7. Evaluation
+```{r}
+table("prediction" = test1$prediction_up, 
+      "actual" = test1$Survived)
+
+```
+
+```{r}
+library(caret)
+
+
+confusionMatrix(data = as.factor(test1$prediction_up),
+                reference = as.factor(test1$Survived),
+                positive = "Yes")
+
+```
+from the model above, we know that `Accuracy` level is 75%, `Sensitivity` / `Recall` is 73%, and `precision` is 50%. There is no preference to use sensitivity nor precision. Therefore the metric that will be used is Accuracy.
+
+
+## KNN Evaluation
+
+Preparing predictor and target variable. 
+In KNN analysis only variable numeric that can be analyzed. therfore, we need to mutate variable `gender` into numeric variable.
+
+```{r}
+train_up_knn <- train_up %>% 
+  mutate(Sex = case_when(Sex == "Female" ~ 1,
+                         Sex == "Male" ~ 0))
+
+
+test_knn <- test %>% 
+  mutate(Sex = case_when(Sex == "Female" ~ 1,
+                         Sex == "Male" ~ 0))
+
+```
+
+
+
+```{r}
+#Persiapan data X
+
+train_x <- train_up_knn %>% 
+  select_if(is.numeric)
+
+test_x <- test_knn %>% 
+  select_if(is.numeric)
+
+```
+
+
+```{r}
+#Persiapan data y
+
+train_y <- train_up_knn %>% 
+  select(Survived)
+
+test_y <- test_knn %>% 
+  select(Survived)
+
+```
+
+* Z-score standarization
+
+```{r}
+# To standardize the Z-score
+
+train_x <- train_x %>%
+  scale()
+
+test_x <- test_x %>% 
+  scale(center= attr(train_x, "scaled:center"),
+        scale = attr(train_x, "scaled:scale"))
+
+```
+
+
+
+```{r}
+# to find out the square root of the data in order to use in KNN prediction
+
+sqrt(nrow(train_x))
+
+dim(train_x)
+dim(test_x)
+```
+```{r}
+length(train_up$Survived)
+```
+
+
+```{r}
+#since the length of data is 1542 (even) therefore for k value we take 'odd' number (39)
+
+library(class)
+
+knn_prediction <- knn(train = train_x,
+    test = test_x,
+    cl = train_y$Survived, 
+    k= 39)
+
+```  
+```{r}
+confusionMatrix(data = as.factor(knn_prediction),
+                reference = test_y$Survived,
+                positive = "Yes")
+
+```
+
+## Compare model Logistic and KNN
+
+Based on the analysis using matrix confusion above, we know that `Accuracy` level resulted using logistic regression and KNN analysis is  75.5% and 75.1% respectively. Therefore we could say performance of both model are same. MeanWhile, based on `sensitivity` from logistic regression we found 72% that slightly below compared to KNN (75%). However, `precision` value of logistic regression and KNN analysis are same at 50%. 
+
+Therefore, based on that performance we can use logistic regression to predict the survival rate on Titanic over KNN analysis. Besides, there are more variable that can be used in logistic regression to predict the survival rate/
